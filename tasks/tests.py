@@ -12,6 +12,16 @@ class TaskBoardAPITests(TestCase):
         self.admin = User.objects.create_user(username='admin', password='pass123', is_staff=True)
         self.user = User.objects.create_user(username='user', password='pass123')
 
+    def test_register_user_creates_account(self):
+        response = self.client.post(reverse('register-user'), {
+            'username': 'newuser',
+            'password': 'pass123',
+            'first_name': 'New',
+        })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(User.objects.filter(username='newuser').exists())
+
     def test_pagination_returns_page_metadata(self):
         for i in range(15):
             Task.objects.create(

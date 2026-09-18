@@ -1,9 +1,15 @@
 import math
 
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.db.models import Q
 from django.http import HttpResponse
-from reportlab.lib.pagesizes import letter
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import landscape, letter
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
 from reportlab.pdfgen import canvas
 from rest_framework import viewsets
 from rest_framework.decorators import action, api_view, permission_classes
@@ -13,9 +19,34 @@ from rest_framework.response import Response
 from .models import Task, TaskComment
 from .serializers import TaskCommentSerializer, TaskSerializer
 
+User = get_user_model()
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@csrf_exempt
+def register_user(request):
+    username = request.data.get('username', '').strip()
+    password = request.data.get('password', '')
+    first_name = request.data.get('first_name', '').strip()
+
+    if not username or not password:
+        return Response({'detail': 'Username and password are required.'}, status=400)
+
+    if User.objects.filter(username=username).exists():
+        return Response({'detail': 'Username already exists.'}, status=400)
+
+    user = User.objects.create_user(username=username, password=password, first_name=first_name)
+    login(request, user)
+    return Response({
+        'username': user.username,
+        'is_staff': user.is_staff,
+    }, status=201)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@csrf_exempt
 def login_user(request):
     username = request.data.get('username')
     password = request.data.get('password')
@@ -33,6 +64,7 @@ def login_user(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@csrf_exempt
 def logout_user(request):
     logout(request)
     return Response({'detail': 'Logged out'})
@@ -40,6 +72,7 @@ def logout_user(request):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@csrf_exempt
 def me(request):
     if request.user.is_authenticated:
         return Response({
@@ -49,6 +82,7 @@ def me(request):
     return Response({'username': None, 'is_staff': False})
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class TaskViewSet(viewsets.ModelViewSet):
     serializer_class = TaskSerializer
     permission_classes = [AllowAny]
@@ -186,29 +220,58 @@ class TaskViewSet(viewsets.ModelViewSet):
         response = HttpResponse(content_type='application/pdf')
         response['Content-Disposition'] = 'attachment; filename="task-board.pdf"'
 
-        page = canvas.Canvas(response, pagesize=letter)
-        y = 750
+        document = SimpleDocTemplate(
+            response,
+            pagesize=landscape(letter),
+            leftMargin=0.4 * inch,
+            rightMargin=0.4 * inch,
+            topMargin=0.4 * inch,
+            bottomMargin=0.4 * inch,
+        )
+        styles = getSampleStyleSheet()
+        header_style = styles['Heading4']
+        header_style.fontSize = 8
+        header_style.leading = 10
+        cell_style = styles['BodyText']
+        cell_style.fontSize = 8
+        cell_style.leading = 10
+        table_data = [[
+            Paragraph('Task Code', header_style),
+            Paragraph('Name', header_style),
+            Paragraph('Priority', header_style),
+            Paragraph('Status', header_style),
+            Paragraph('Due Date', header_style),
+            Paragraph('Description', header_style),
+        ]]
         for task in tasks:
-            if y < 120:
-                page.showPage()
-                y = 750
+            table_data.append([
+                Paragraph(task.task_code, cell_style),
+                Paragraph(task.name, cell_style),
+                Paragraph(task.priority, cell_style),
+                Paragraph(task.status, cell_style),
+                Paragraph(str(task.due_date or 'N/A'), cell_style),
+                Paragraph(task.description or 'No description provided.', cell_style),
+            ])
 
-            page.drawString(70, y, f'{task.task_code} - {task.name}')
-            y -= 20
-            page.drawString(70, y, f'Priority: {task.priority} | Status: {task.status} | Due: {task.due_date or "N/A"}')
-            y -= 20
-            description = (task.description or 'No description provided.')
-            lines = description.splitlines() or ['No description provided.']
-            for line in lines[:4]:
-                page.drawString(70, y, line[:90])
-                y -= 16
-                if y < 80:
-                    page.showPage()
-                    y = 750
-                    break
-            y -= 10
-
-        page.save()
+        table = Table(
+            table_data,
+            repeatRows=1,
+            colWidths=[1.35 * inch, 1.55 * inch, 0.8 * inch, 0.95 * inch, 0.85 * inch, 4.7 * inch],
+        )
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e79')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#b7c9d6')),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#eef5fb')]),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ]))
+        document.build([table])
         return response
 
     @action(detail=False, methods=['get'])
@@ -233,6 +296,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         return response
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class TaskCommentViewSet(viewsets.ModelViewSet):
     serializer_class = TaskCommentSerializer
     permission_classes = [AllowAny]

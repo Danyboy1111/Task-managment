@@ -17,7 +17,7 @@ class TaskCommentSerializer(serializers.ModelSerializer):
 
 
 class TaskSerializer(serializers.ModelSerializer):
-    image = serializers.SerializerMethodField()
+    image = serializers.ImageField(required=False, allow_null=True)
     comments = TaskCommentSerializer(many=True, read_only=True)
 
     class Meta:
@@ -29,11 +29,11 @@ class TaskSerializer(serializers.ModelSerializer):
             "id", "task_code", "created_by", "created_at", "updated_at", "comments"
         ]
 
-    def get_image(self, obj):
-        if not obj.image:
-            return None
-
-        request = self.context.get("request")
-        if request is not None:
-            return request.build_absolute_uri(obj.image.url)
-        return obj.image.url
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.image:
+            request = self.context.get("request")
+            data["image"] = request.build_absolute_uri(instance.image.url) if request else instance.image.url
+        else:
+            data["image"] = None
+        return data
